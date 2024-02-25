@@ -1,0 +1,4 @@
+[workspace]
+
+resolver="2"
+members = [ "rizin-librz-sys", "rz-psp-resolve-nid" ]
