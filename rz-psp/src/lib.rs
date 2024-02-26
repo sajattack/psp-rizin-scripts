@@ -3,15 +3,13 @@ use core::{
     ptr, mem
 };
 
-use libc::{uintptr_t};
-
 use rizin_librz_sys::{
     RzCorePlugin, RzCore, rz_core_plugin_t, RzLibStruct, RzLibType_RZ_LIB_TYPE_CORE,
     RzCmd, RzCmdDesc, rz_cmd_get_root, rz_cmd_desc_argv_new, 
     rz_cmd_status_t_RZ_CMD_STATUS_WRONG_ARGS, rz_cmd_status_t_RZ_CMD_STATUS_OK,
     rz_cmd_status_t_RZ_CMD_STATUS_INVALID,
     RzCmdDescHelp, RzCmdDescArg, rz_cmd_arg_type_t_RZ_CMD_ARG_TYPE_STRING,
-    RzCmdStatus, RzCmdDescDetail
+    RzCmdStatus, RzCmdDescDetail, RzCmdDescDetailEntry,
 };
 
 
@@ -56,15 +54,22 @@ pub unsafe extern "C" fn rz_cmd_psp_handler(core: *mut RzCore, argc: c_int, argv
 static mut cmd_psp_help: RzCmdDescHelp = RzCmdDescHelp {
     summary: b"Sony PSP Reverse Engineering Plugin\0".as_ptr() as *const c_char,
     args: unsafe { cmd_psp_args.as_ptr() },
-    description: b"\0".as_ptr() as *const c_char,
-    args_str: b"\0".as_ptr() as *const c_char,
-    usage: b"\0".as_ptr() as *const c_char,
-    options: b"\0".as_ptr() as *const c_char,
-    sort_subcommands: false,
-    details: &RzCmdDescDetail {
-        name: ptr::null(),
-        entries: ptr::null(),
-    } as *const RzCmdDescDetail,
+    description: ptr::null(),
+    args_str: ptr::null(),
+    usage:  b"rz-psp subcommand\0".as_ptr() as *const c_char,
+    options: ptr::null(),
+    sort_subcommands: true,
+    details: [RzCmdDescDetail {
+        name: b"subcommand\0".as_ptr() as *const c_char,
+        entries: [
+            RzCmdDescDetailEntry {
+                text: b"nid\0".as_ptr() as *const c_char,
+                comment: b"Resolve NIDs to function names\0".as_ptr() as *const c_char,
+                arg_str: ptr::null(),
+            },
+            unsafe { core::mem::zeroed()}
+        ].as_ptr()
+    }, unsafe { core::mem::zeroed()}].as_ptr() as *const RzCmdDescDetail,
     details_cb: None,
 };
 
@@ -76,7 +81,7 @@ static mut cmd_psp_args: [RzCmdDescArg;1] =
         optional: false, 
         no_space: false, 
         flags: 0,
-        default_value: b"\0".as_ptr() as *const c_char,
+        default_value: ptr::null(),
         __bindgen_anon_1: unsafe { mem::zeroed() },
     },
 ];
