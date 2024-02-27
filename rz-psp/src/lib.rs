@@ -11,7 +11,7 @@ use rizin_librz_sys::{
     rz_cmd_status_t_RZ_CMD_STATUS_INVALID,
     RzCmdDescHelp, RzCmdDescArg, rz_cmd_arg_type_t_RZ_CMD_ARG_TYPE_STRING,
     RzCmdStatus, RzCmdDescDetail, RzCmdDescDetailEntry,
-    rz_io_read_at, rz_io_size
+    rz_io_read_at, rz_io_size, RzBinSection, rz_bin_get_sections
 };
 
 
@@ -88,14 +88,44 @@ static mut cmd_psp_args: [RzCmdDescArg;1] =
     },
 ];
 
+/// A generic converter from RzList to Vec
+macro_rules! rzlist_to_vec {
+    ($fn_name:ident,  $return_type:ident, $size:expr) => {
+        fn $fn_name(rzl: *mut rizin_librz_sys::RzList) -> Vec<$return_type> {
+            let mut vec: Vec<$return_type> = Vec::new();
+            unsafe {
+                let mut ptr = (*rzl).head;
+                while !ptr.is_null() {
+                    let data = (*ptr).data;
+                    let element = data as *mut u8;
+                    if let el = |element: *mut u8| -> $return_type {
+                        let mut buf = [0u8; $size];
+                        element.copy_to(buf.as_mut_ptr(), $size);
+                        let ret = core::mem::transmute_copy::<[u8; $size], $return_type>(&buf);
+                        ret
+                    }(element)
+                    {
+                        vec.push(el);
+                    }
+                    ptr = (*ptr).n;
+                }
+            }
+            vec
+        }
+    };
+}
+
+rzlist_to_vec!(section_list_to_vec, RzBinSection, core::mem::size_of::<RzBinSection>());
+
 fn do_nid_stuff(core: *mut RzCore) {
     println!("Hello NID");
     let io = unsafe { (*core).io };
-    let mut buf = Vec::new();
-    let size = unsafe { rz_io_size(io) };
-    buf.resize(size.try_into().unwrap(), 0);
-    unsafe { rz_io_read_at(io, 0, buf.as_mut_ptr(), size.try_into().unwrap()); }
-    println!("{}", std::string::String::from_utf8(buf.to_vec()).unwrap());
+    let bin = unsafe { (*core).bin };
+    let sections = unsafe { rz_bin_get_sections(bin) };
+    let sections = section_list_to_vec(sections);
+    for s in sections {
+        println!("{}", unsafe { CStr::from_ptr(s.name).to_str().unwrap()} ); 
+    }
 }
 
 #[no_mangle]
@@ -105,3 +135,5 @@ pub static mut rizin_plugin: RzLibStruct = RzLibStruct {
     version: b"0.6.3\0".as_ptr() as *const _,
     free: None,
 };
+
+
