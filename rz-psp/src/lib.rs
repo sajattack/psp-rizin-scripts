@@ -1,6 +1,7 @@
 use core::{
     ffi::{c_char, c_void, c_int, CStr},
-    ptr, mem
+    ptr, mem,
+    convert::TryInto,
 };
 
 use rizin_librz_sys::{
@@ -10,6 +11,7 @@ use rizin_librz_sys::{
     rz_cmd_status_t_RZ_CMD_STATUS_INVALID,
     RzCmdDescHelp, RzCmdDescArg, rz_cmd_arg_type_t_RZ_CMD_ARG_TYPE_STRING,
     RzCmdStatus, RzCmdDescDetail, RzCmdDescDetailEntry,
+    rz_io_read_at, rz_io_size
 };
 
 
@@ -43,7 +45,7 @@ pub unsafe extern "C" fn rz_cmd_psp_handler(core: *mut RzCore, argc: c_int, argv
         return rz_cmd_status_t_RZ_CMD_STATUS_WRONG_ARGS
     } else {
         if  CStr::from_ptr(*argv.offset(1)).to_str().unwrap() == "nid" {
-            do_nid_stuff();
+            do_nid_stuff(core);
             rz_cmd_status_t_RZ_CMD_STATUS_OK
         } else {
             rz_cmd_status_t_RZ_CMD_STATUS_INVALID
@@ -86,8 +88,14 @@ static mut cmd_psp_args: [RzCmdDescArg;1] =
     },
 ];
 
-fn do_nid_stuff() {
+fn do_nid_stuff(core: *mut RzCore) {
     println!("Hello NID");
+    let io = unsafe { (*core).io };
+    let mut buf = Vec::new();
+    let size = unsafe { rz_io_size(io) };
+    buf.resize(size.try_into().unwrap(), 0);
+    unsafe { rz_io_read_at(io, 0, buf.as_mut_ptr(), size.try_into().unwrap()); }
+    println!("{}", std::string::String::from_utf8(buf.to_vec()).unwrap());
 }
 
 #[no_mangle]

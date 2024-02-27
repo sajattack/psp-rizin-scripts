@@ -172,12 +172,15 @@ fn main() {
         .header("rizin/librz/include/rz_skiplist.h")
         //.header("rizin/librz/include/rz_socket.h")
         .header("rizin/librz/include/rz_syscall.h")
+        .derive_default(true)
+        .allowlist_function("rz_.*")
+        .allowlist_type("[Rz|rz].*")
         .parse_callbacks(Box::new(IgnoreMacros::new()))
         .generate()
         .expect("Unable to generate bindings");
 
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
         bindings
-            .write_to_file("src/lib.rs")
+            .write_to_file(out_path.join("bindings.rs"))
             .expect("Couldn't write bindings!");
 }
