@@ -98,15 +98,10 @@ macro_rules! rzlist_to_vec {
                 while !ptr.is_null() {
                     let data = (*ptr).data;
                     let element = data as *mut u8;
-                    if let el = |element: *mut u8| -> $return_type {
-                        let mut buf = [0u8; $size];
-                        element.copy_to(buf.as_mut_ptr(), $size);
-                        let ret = core::mem::transmute_copy::<[u8; $size], $return_type>(&buf);
-                        ret
-                    }(element)
-                    {
-                        vec.push(el);
-                    }
+                    let mut buf = [0u8; $size];
+                    element.copy_to(buf.as_mut_ptr(), $size);
+                    let el = core::mem::transmute::<[u8; $size], $return_type>(buf);
+                    vec.push(el);
                     ptr = (*ptr).n;
                 }
             }
