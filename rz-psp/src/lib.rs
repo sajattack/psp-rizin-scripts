@@ -1,5 +1,8 @@
+mod types;
+use crate::types::*;
+
 use core::{
-    ffi::{c_char, c_void, c_int, CStr},
+    ffi::{c_char, c_void, c_int, CStr, c_ulonglong},
     ptr, mem,
     convert::TryInto,
 };
@@ -12,9 +15,10 @@ use rizin_librz_sys::{
     RzCmdDescHelp, RzCmdDescArg, rz_cmd_arg_type_t_RZ_CMD_ARG_TYPE_STRING,
     RzCmdStatus, RzCmdDescDetail, RzCmdDescDetailEntry,
     rz_io_read_at, rz_io_read_at_mapped, rz_io_size, RzBinSection, rz_bin_get_sections,
-    rz_io_p2v,
+    rz_io_p2v, rz_bin_object_get_string_at,
 };
 
+use bytemuck::from_bytes; 
 
 const rz_core_plugin_psp: RzCorePlugin = RzCorePlugin {
 	name: b"rz-psp\0".as_ptr() as *const c_char,
@@ -76,7 +80,7 @@ static mut cmd_psp_help: RzCmdDescHelp = RzCmdDescHelp {
     details_cb: None,
 };
 
-static mut cmd_psp_args: [RzCmdDescArg;1] = 
+static mut cmd_psp_args: [RzCmdDescArg;2] = 
 [
     RzCmdDescArg {
         name: b"subcommand\0".as_ptr() as *const c_char,
@@ -87,6 +91,7 @@ static mut cmd_psp_args: [RzCmdDescArg;1] =
         default_value: ptr::null(),
         __bindgen_anon_1: unsafe { mem::zeroed() },
     },
+    unsafe { core::mem::zeroed() }
 ];
 
 /// A generic converter from RzList to Vec
@@ -101,6 +106,8 @@ macro_rules! rzlist_to_vec {
                     let element = data as *mut u8;
                     let mut buf = [0u8; $size];
                     element.copy_to(buf.as_mut_ptr(), $size);
+                    // FIXME maybe bytemuck this if you can find a decent
+                    // way to derive the trait required???
                     let el = core::mem::transmute::<[u8; $size], $return_type>(buf);
                     vec.push(el);
                     ptr = (*ptr).n;
@@ -116,7 +123,11 @@ rzlist_to_vec!(section_list_to_vec, RzBinSection, core::mem::size_of::<RzBinSect
 fn do_nid_stuff(core: *mut RzCore) {
     println!("Hello NID");
     let io = unsafe { (*core).io };
+    unsafe { (*io).va = false as i32; } // use physical addreses
     let bin = unsafe { (*core).bin };
+
+    let bobj = unsafe { (*(*bin).cur).o };
+
     let sections = unsafe { rz_bin_get_sections(bin) };
     let sections = section_list_to_vec(sections);
     for s in sections {
@@ -124,103 +135,47 @@ fn do_nid_stuff(core: *mut RzCore) {
         if name == ".rodata.sceModuleInfo" {
             let mut buf = Vec::new();
             buf.resize(s.size.try_into().unwrap(), 0);
-            unsafe { rz_io_read_at(io, s.vaddr, buf.as_mut_ptr(), s.size.try_into().unwrap()) };
-            // FIXME
-            let boxed_slice = buf[..core::mem::size_of::<sceModuleInfo>()].to_vec().into_boxed_slice();
-            let boxed_array: Box<[u8; core::mem::size_of::<sceModuleInfo>()]> = boxed_slice.try_into().unwrap();
-            let modinfo = unsafe { core::mem::transmute::<[u8; core::mem::size_of::<sceModuleInfo>()], sceModuleInfo>(*boxed_array)};
-            println!("{:x?}", modinfo);
+            unsafe { rz_io_read_at(io, s.paddr, buf.as_mut_ptr(), s.size.try_into().unwrap()) };
+            let modinfo = bytemuck::from_bytes::<PspModuleInfo>(&buf[..core::mem::size_of::<PspModuleInfo>()]);
 
-            buf = Vec::new();
-            buf.resize(modinfo.exports_end_addr as usize - modinfo.exports_addr as usize, 0);
-            let exports_vaddr = unsafe { rz_io_p2v(io, modinfo.exports_addr.try_into().unwrap()) };
-            unsafe { rz_io_read_at(io, exports_vaddr as u64, buf.as_mut_ptr(), (modinfo.exports_end_addr - modinfo.exports_addr) as i32) };
+            let mut buf = Vec::new();
+            let exports_size = modinfo.exports_end_addr - modinfo.exports_addr;
+            let exports_count = exports_size as usize / core::mem::size_of::<PspModuleExport>();
+            buf.resize(exports_size as usize, 0);
+            let exports_paddr: u64 = modinfo.exports_addr.try_into().unwrap();
+            unsafe { rz_io_read_at(io, exports_paddr, buf.as_mut_ptr(), exports_size as i32) };
             let export_bytes = buf;
+            let exports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleExport>(&export_bytes);
 
-            println!("export_bytes {:x?}", export_bytes);
-
-            let boxed_slice = export_bytes[..core::mem::size_of::<sceModuleExport>()].to_vec().into_boxed_slice();
-            let boxed_array: Box<[u8; core::mem::size_of::<sceModuleExport>()]> = boxed_slice.try_into().unwrap();
-            let exports = unsafe { core::mem::transmute::<[u8; core::mem::size_of::<sceModuleExport>()], sceModuleExport>(*boxed_array)};
-
-
-            //dbg!(exports);
-            println!("{:x?}", exports);
-            
-            buf = Vec::new();
-            buf.resize(modinfo.imports_end_addr as usize - modinfo.imports_addr as usize, 0);
-            let imports_vaddr = unsafe { rz_io_p2v(io, modinfo.imports_addr.try_into().unwrap()) };
-            unsafe { rz_io_read_at(io, imports_vaddr as u64, buf.as_mut_ptr(), (modinfo.imports_end_addr - modinfo.imports_addr) as i32) };
+            let mut buf = Vec::new();
+            let imports_size = modinfo.imports_end_addr - modinfo.imports_addr;
+            let imports_count = imports_size as usize / core::mem::size_of::<PspModuleImport>();
+            buf.resize(imports_size as usize, 0);
+            let imports_paddr: u64 = modinfo.imports_addr.try_into().unwrap();
+            unsafe { rz_io_read_at(io, imports_paddr, buf.as_mut_ptr(), imports_size as i32) };
             let import_bytes = buf;
-            println!("import_bytes {:x?}", import_bytes);
+            let imports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleImport>(&import_bytes);
 
-            let boxed_slice = import_bytes[..core::mem::size_of::<sceModuleImport>()].to_vec().into_boxed_slice();
-            let boxed_array: Box<[u8; core::mem::size_of::<sceModuleImport>()]> = boxed_slice.try_into().unwrap();
-            let imports = unsafe { core::mem::transmute::<[u8; core::mem::size_of::<sceModuleImport>()], sceModuleImport>(*boxed_array)};
-
-            //dbg!(imports);
-            println!("{:x?}", imports);
-            let imports_name_vaddr = unsafe { rz_io_p2v(io, imports.name.try_into().unwrap()) };
-
-            // FIXME strings longer than 256 chars?
-            let mut buf = [0u8; 256];
-            unsafe { rz_io_read_at(io, imports_name_vaddr as u64, buf.as_mut_ptr(), 256);}
-            //dbg!(buf);
-            let import_name = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
-            println!("{}", import_name);
-
-
-            let nid_vaddr = unsafe { rz_io_p2v(io, imports.nid_addr.try_into().unwrap()) };
-
-
-            //imports.func_count * 4; 
-            //let mut buf = Vec::new();
-            //buf.resize(imports.func_count as usize * 4, 0);
-            //unsafe { rz_io_read_at(io, nid_vaddr as u64, buf.as_mut_ptr(), imports.func_count as i32 * 4); }
-            //dbg!(buf);  
-
+            for imp in imports {
+                unsafe { 
+                    let imp: PspModuleImport = imp;
+                    let bs = rz_bin_object_get_string_at(bobj, imp.name as c_ulonglong, false);
+                    if bs.is_null() {
+                        println!("NULL")
+                    }
+                    else
+                    {
+                        println!("{}", CStr::from_ptr((*bs).string).to_str().unwrap());
+                    }
+                }
+            }
 
         } else if name == ".rodata.sceNid" {
             let mut buf = Vec::new();
             buf.resize(s.size.try_into().unwrap(), 0);
-            unsafe { rz_io_read_at(io, s.vaddr, buf.as_mut_ptr(), s.size.try_into().unwrap()) };
-            println!("sceNid {:x?}", buf);
+            unsafe { rz_io_read_at(io, s.paddr, buf.as_mut_ptr(), s.size.try_into().unwrap()) };
         }
-        //println!("{}", name);
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-struct sceModuleInfo {
-    flags: u32,
-    name: [u8; 28],
-    gp_addr: u32,
-    exports_addr: u32,
-    exports_end_addr: u32,
-    imports_addr: u32,
-    imports_end_addr: u32
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-struct sceModuleImport {
-    name: u32,
-    flags: u32,
-    entry_size: u8,
-    var_count: u8,
-    func_count: u16,
-    nid_addr: u32,
-    funcs_addr: u32,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-struct sceModuleExport {
-    name: u32,
-    flags: u32,
-    counts: u32,
-    exports: u32
 }
 
 #[no_mangle]
