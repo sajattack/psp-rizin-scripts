@@ -135,40 +135,48 @@ fn do_nid_stuff(core: *mut RzCore) {
         if name == ".rodata.sceModuleInfo" {
             let mut buf = Vec::new();
             buf.resize(s.size.try_into().unwrap(), 0);
+            //println!("{:x}", s.paddr);
             unsafe { rz_io_read_at(io, s.paddr, buf.as_mut_ptr(), s.size.try_into().unwrap()) };
             let modinfo = bytemuck::from_bytes::<PspModuleInfo>(&buf[..core::mem::size_of::<PspModuleInfo>()]);
+            //dbg!(modinfo);
+            
+            println!("{}", String::from_utf8(modinfo.name.iter().map(|c| *c as u8).collect()).unwrap());
+
 
             let mut buf = Vec::new();
             let exports_size = modinfo.exports_end_addr - modinfo.exports_addr;
             let exports_count = exports_size as usize / core::mem::size_of::<PspModuleExport>();
             buf.resize(exports_size as usize, 0);
-            let exports_paddr: u64 = modinfo.exports_addr.try_into().unwrap();
+            let exports_paddr = (modinfo.exports_addr + EHDR_SIZE) as u64;
+            //println!("{:x}", exports_paddr);
             unsafe { rz_io_read_at(io, exports_paddr, buf.as_mut_ptr(), exports_size as i32) };
             let export_bytes = buf;
             let exports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleExport>(&export_bytes);
 
             let mut buf = Vec::new();
             let imports_size = modinfo.imports_end_addr - modinfo.imports_addr;
+            //dbg!(imports_size);
             let imports_count = imports_size as usize / core::mem::size_of::<PspModuleImport>();
             buf.resize(imports_size as usize, 0);
-            let imports_paddr: u64 = modinfo.imports_addr.try_into().unwrap();
+            let imports_paddr = (modinfo.imports_addr + EHDR_SIZE) as u64;
+            //println!("{:x}", imports_paddr);
             unsafe { rz_io_read_at(io, imports_paddr, buf.as_mut_ptr(), imports_size as i32) };
             let import_bytes = buf;
             let imports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleImport>(&import_bytes);
 
             for imp in imports {
-                unsafe { 
-                    let imp: PspModuleImport = imp;
-                    let bs = rz_bin_object_get_string_at(bobj, imp.name as c_ulonglong, false);
-                    if bs.is_null() {
-                        println!("NULL")
-                    }
-                    else
-                    {
-                        println!("{}", CStr::from_ptr((*bs).string).to_str().unwrap());
-                    }
-                }
+                //dbg!(imp);
+                let imp: PspModuleImport = imp;
+                let mut buf = [0u8;PSP_LIB_MAX_NAME];
+                unsafe { rz_io_read_at(io, (imp.name + EHDR_SIZE).into(), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as i32); }
+                println!("{}", CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap());
             }
+
+            for exp in exports {
+                //dbg!(imp);
+                println!("{:x?}", exp);
+            }
+
 
         } else if name == ".rodata.sceNid" {
             let mut buf = Vec::new();

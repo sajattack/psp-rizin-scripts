@@ -9,6 +9,7 @@ pub enum PspEntryType {
 	PSP_ENTRY_VAR = 1
 }
 
+pub const EHDR_SIZE: u32 = 64;
 pub const PSP_MODULE_MAX_NAME: usize = 28;
 pub const PSP_LIB_MAX_NAME: usize = 128;
 pub const PSP_ENTRY_MAX_NAME: usize = 128;
@@ -17,7 +18,7 @@ pub const PSP_MAX_V_ENTRIES: usize = 255;
 pub const PSP_MAX_F_ENTRIES: usize = 65535;
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
-#[repr(C)]
+#[repr(C, packed)]
 pub struct PspModuleInfo {
     pub flags: u32,
     pub name: [c_char; PSP_MODULE_MAX_NAME],
@@ -29,7 +30,7 @@ pub struct PspModuleInfo {
 }
 
 #[derive(Debug, Clone, Copy, Default, Zeroable, Pod)]
-#[repr(C)]
+#[repr(C, packed)]
 pub struct PspModuleImport {
     pub name: u32,
     pub flags: u32,
@@ -41,7 +42,7 @@ pub struct PspModuleImport {
 }
 
 #[derive(Debug, Clone, Copy, Default, Zeroable, Pod)]
-#[repr(C)]
+#[repr(C, packed)]
 pub struct PspModuleExport {
     pub name: u32,
     pub flags: u32,
@@ -65,7 +66,7 @@ pub struct PspModuleExport {
 //}
 
 #[derive(Debug, Clone, Copy)]
-#[repr(C)]
+#[repr(C, packed)]
 pub struct PspEntry {
     pub name: [c_char; PSP_ENTRY_MAX_NAME],
     pub nid: u32,
