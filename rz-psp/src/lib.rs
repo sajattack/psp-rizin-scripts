@@ -7,18 +7,20 @@ use core::{
     convert::TryInto,
 };
 
+use std::ffi::CString;
+
 use rizin_librz_sys::{
     RzCorePlugin, RzCore, rz_core_plugin_t, RzLibStruct, RzLibType_RZ_LIB_TYPE_CORE,
     RzCmd, RzCmdDesc, rz_cmd_get_root, rz_cmd_desc_argv_new, 
     rz_cmd_status_t_RZ_CMD_STATUS_WRONG_ARGS, rz_cmd_status_t_RZ_CMD_STATUS_OK,
     rz_cmd_status_t_RZ_CMD_STATUS_INVALID,
     RzCmdDescHelp, RzCmdDescArg, rz_cmd_arg_type_t_RZ_CMD_ARG_TYPE_STRING,
-    RzCmdStatus, RzCmdDescDetail, RzCmdDescDetailEntry,
-    rz_io_read_at, rz_io_read_at_mapped, rz_io_size, RzBinSection, rz_bin_get_sections,
-    rz_io_p2v, rz_bin_object_get_string_at,
+    RzCmdStatus, RzCmdDescDetail, RzCmdDescDetailEntry, rz_io_read_at, RzBinSection,
+    rz_bin_get_sections, rz_type_db_new, rz_type_db_init, rz_type_parse_string,
 };
 
 use bytemuck::from_bytes; 
+
 
 const rz_core_plugin_psp: RzCorePlugin = RzCorePlugin {
 	name: b"rz-psp\0".as_ptr() as *const c_char,
@@ -122,11 +124,25 @@ rzlist_to_vec!(section_list_to_vec, RzBinSection, core::mem::size_of::<RzBinSect
 
 fn do_nid_stuff(core: *mut RzCore) {
     println!("Hello NID");
+
+    let psp_header = include_str!("../assets/pspsdk_types.h");
+    let psp_niddb = include_str!("../assets/niddb_combined.xml");
+
+    let anal = unsafe { (*core).analysis };
     let io = unsafe { (*core).io };
     unsafe { (*io).va = false as i32; } // use physical addreses
     let bin = unsafe { (*core).bin };
-
     let bobj = unsafe { (*(*bin).cur).o };
+    let typedb = unsafe { (*anal).typedb };
+
+    // load psp types
+    unsafe { rz_type_db_init(typedb, b".\0".as_ptr() as *const _, b"mips\0".as_ptr() as *const _, 32, b"none\0".as_ptr() as *const _); }
+    let mut error = vec![vec![0u8; 1024]; 10];
+    let psp_header_c = CString::new(psp_header).unwrap();
+    if unsafe { rz_type_parse_string(typedb, psp_header_c.as_ptr(), error.as_mut_ptr() as *mut *mut _) } != 0 {
+        println!("{}", CStr::from_bytes_until_nul(&error[0]).unwrap().to_str().unwrap());
+    }
+
 
     let sections = unsafe { rz_bin_get_sections(bin) };
     let sections = section_list_to_vec(sections);
