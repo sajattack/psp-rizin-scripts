@@ -1956,7 +1956,7 @@ struct PspModuleImport {
 
 struct PspModuleInfo {
 	u32 flags;
-	char name[PSP_MODULE_MAX_NAME];
+	char name[28];
 	u32 gp;
 	u32 exports;
 	u32 exp_end;
@@ -1965,7 +1965,7 @@ struct PspModuleInfo {
 };
 
 struct PspEntry {
-	char name[PSP_ENTRY_MAX_NAME];
+	char name[128];
 	u32 nid;
 	enum PspEntryType type;
 	u32 addr;
@@ -1975,12 +1975,12 @@ struct PspEntry {
 struct PspLibImport {
 	struct PspLibImport *prev;
 	struct PspLibImport *next;
-	char name[PSP_LIB_MAX_NAME];
+	char name[128];
 	u32 addr;
 	struct PspModuleImport stub;
-	struct PspEntry funcs[PSP_MAX_F_ENTRIES];
+	struct PspEntry funcs[65535];
 	int f_count;
-	struct PspEntry vars[PSP_MAX_V_ENTRIES];
+	struct PspEntry vars[255];
 	int v_count;
 };
 
@@ -1988,17 +1988,17 @@ struct PspLibExport
 	{
 	struct PspLibExport *prev;
 	struct PspLibExport *next;
-	char name[PSP_LIB_MAX_NAME];
+	char name[128];
 	u32 addr;
 	struct PspModuleExport stub;
-	struct PspEntry funcs[PSP_MAX_F_ENTRIES];
+	struct PspEntry funcs[65535];
 	int f_count;
-	struct PspEntry vars[PSP_MAX_V_ENTRIES];
+	struct PspEntry vars[255];
 	int v_count;
 };
 
 struct PspModule {
-	char name[PSP_MODULE_MAX_NAME+1];
+	char name[28+1];
 	struct PspModuleInfo info;
 	u32 addr;
 	struct PspLibExport *exp_head;

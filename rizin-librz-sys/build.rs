@@ -173,6 +173,7 @@ fn main() {
         //.header("rizin/librz/include/rz_socket.h")
         .header("rizin/librz/include/rz_syscall.h")
         .derive_default(true)
+        .derive_debug(true)
         .allowlist_function("rz_.*")
         .allowlist_type("[Rz|rz].*")
         .parse_callbacks(Box::new(IgnoreMacros::new()))

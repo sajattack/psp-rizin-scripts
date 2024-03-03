@@ -16,7 +16,9 @@ use rizin_librz_sys::{
     rz_cmd_status_t_RZ_CMD_STATUS_INVALID,
     RzCmdDescHelp, RzCmdDescArg, rz_cmd_arg_type_t_RZ_CMD_ARG_TYPE_STRING,
     RzCmdStatus, RzCmdDescDetail, RzCmdDescDetailEntry, rz_io_read_at, RzBinSection,
-    rz_bin_get_sections, rz_type_db_new, rz_type_db_init, rz_type_parse_string,
+    rz_bin_get_sections, rz_type_db_init, rz_type_parse_string,
+    rz_analysis_var_global_create, rz_type_db_get_struct, 
+    rz_type_identifier_of_base_type, rz_type_array_of_base_type,
 };
 
 use bytemuck::from_bytes; 
@@ -136,13 +138,11 @@ fn do_nid_stuff(core: *mut RzCore) {
     let typedb = unsafe { (*anal).typedb };
 
     // load psp types
-    unsafe { rz_type_db_init(typedb, b".\0".as_ptr() as *const _, b"mips\0".as_ptr() as *const _, 32, b"none\0".as_ptr() as *const _); }
     let mut error = vec![vec![0u8; 1024]; 10];
     let psp_header_c = CString::new(psp_header).unwrap();
     if unsafe { rz_type_parse_string(typedb, psp_header_c.as_ptr(), error.as_mut_ptr() as *mut *mut _) } != 0 {
         println!("{}", CStr::from_bytes_until_nul(&error[0]).unwrap().to_str().unwrap());
     }
-
 
     let sections = unsafe { rz_bin_get_sections(bin) };
     let sections = section_list_to_vec(sections);
@@ -151,37 +151,35 @@ fn do_nid_stuff(core: *mut RzCore) {
         if name == ".rodata.sceModuleInfo" {
             let mut buf = Vec::new();
             buf.resize(s.size.try_into().unwrap(), 0);
-            //println!("{:x}", s.paddr);
             unsafe { rz_io_read_at(io, s.paddr, buf.as_mut_ptr(), s.size.try_into().unwrap()) };
             let modinfo = bytemuck::from_bytes::<PspModuleInfo>(&buf[..core::mem::size_of::<PspModuleInfo>()]);
-            //dbg!(modinfo);
+            let rz_modinfo_type = unsafe { rz_type_identifier_of_base_type(typedb, rz_type_db_get_struct(typedb, b"PspModuleInfo\0".as_ptr() as *const _), false)};
+            let rz_modinfo_var = unsafe { rz_analysis_var_global_create(anal, b"PspModuleInfo\0".as_ptr() as *const _, rz_modinfo_type, s.paddr) };
             
-            println!("{}", String::from_utf8(modinfo.name.iter().map(|c| *c as u8).collect()).unwrap());
-
-
             let mut buf = Vec::new();
             let exports_size = modinfo.exports_end_addr - modinfo.exports_addr;
             let exports_count = exports_size as usize / core::mem::size_of::<PspModuleExport>();
             buf.resize(exports_size as usize, 0);
             let exports_paddr = (modinfo.exports_addr + EHDR_SIZE) as u64;
-            //println!("{:x}", exports_paddr);
             unsafe { rz_io_read_at(io, exports_paddr, buf.as_mut_ptr(), exports_size as i32) };
             let export_bytes = buf;
             let exports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleExport>(&export_bytes);
+            dbg!(exports.clone());
+            let rz_exports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleExport\0".as_ptr() as *const _), exports_count as u64)};
+            let rz_exports_var = unsafe { rz_analysis_var_global_create(anal, b"PspModuleExports\0".as_ptr() as *const _, rz_exports_type, exports_paddr) };
 
             let mut buf = Vec::new();
             let imports_size = modinfo.imports_end_addr - modinfo.imports_addr;
-            //dbg!(imports_size);
             let imports_count = imports_size as usize / core::mem::size_of::<PspModuleImport>();
             buf.resize(imports_size as usize, 0);
             let imports_paddr = (modinfo.imports_addr + EHDR_SIZE) as u64;
-            //println!("{:x}", imports_paddr);
             unsafe { rz_io_read_at(io, imports_paddr, buf.as_mut_ptr(), imports_size as i32) };
             let import_bytes = buf;
             let imports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleImport>(&import_bytes);
+            let rz_imports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleImport\0".as_ptr() as *const _), imports_count as u64)};
+            let rz_imports_var = unsafe { rz_analysis_var_global_create(anal, b"PspModuleImports\0".as_ptr() as *const _, rz_imports_type, imports_paddr) };
 
             for imp in imports {
-                //dbg!(imp);
                 let imp: PspModuleImport = imp;
                 let mut buf = [0u8;PSP_LIB_MAX_NAME];
                 unsafe { rz_io_read_at(io, (imp.name + EHDR_SIZE).into(), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as i32); }
@@ -206,7 +204,7 @@ fn do_nid_stuff(core: *mut RzCore) {
 pub static mut rizin_plugin: RzLibStruct = RzLibStruct {
     type_: RzLibType_RZ_LIB_TYPE_CORE,
     data: &rz_core_plugin_psp as *const _ as *mut c_void, // lolwut?
-    version: b"0.6.3\0".as_ptr() as *const _,
+    version: b"0.6.2\0".as_ptr() as *const _,
     free: None,
 };
 
