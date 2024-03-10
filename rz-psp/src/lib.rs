@@ -7,7 +7,7 @@ use core::{
     convert::TryInto,
 };
 
-use std::ffi::CString;
+use std::{ffi::CString, collections::HashMap};
 
 use rizin_librz_sys::{
     RzCorePlugin, RzCore, rz_core_plugin_t, RzLibStruct, RzLibType_RZ_LIB_TYPE_CORE,
@@ -19,10 +19,12 @@ use rizin_librz_sys::{
     rz_bin_get_sections, rz_type_db_init, rz_type_parse_string,
     rz_analysis_var_global_create, rz_type_db_get_struct, 
     rz_type_identifier_of_base_type, rz_type_array_of_base_type,
+    rz_analysis_get_function_at, rz_analysis_function_rename,
 };
 
 use bytemuck::from_bytes; 
 
+use serde::{Deserialize, Deserializer};
 
 const rz_core_plugin_psp: RzCorePlugin = RzCorePlugin {
 	name: b"rz-psp\0".as_ptr() as *const c_char,
@@ -122,6 +124,40 @@ macro_rules! rzlist_to_vec {
     };
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct FunctionInner {
+    #[serde(rename="NID")]
+    pub nid_hex_string: String,
+    #[serde(rename="NAME")]
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct FunctionOuter {
+    #[serde(rename="FUNCTION")]
+    pub function: FunctionInner,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct FunctionVec (
+    #[serde(deserialize_with = "unwrap_list")]
+    pub  Vec<FunctionOuter>,
+);
+
+fn unwrap_list<'de, D>(deserializer: D) -> Result<Vec<FunctionOuter>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    /// Represents <list>...</list>
+    #[derive(Deserialize)]
+    struct List {
+        // default allows empty list
+        #[serde(default)]
+        element: Vec<FunctionOuter>,
+    }
+    Ok(List::deserialize(deserializer)?.element)
+}
+
 rzlist_to_vec!(section_list_to_vec, RzBinSection, core::mem::size_of::<RzBinSection>());
 
 fn do_nid_stuff(core: *mut RzCore) {
@@ -129,6 +165,13 @@ fn do_nid_stuff(core: *mut RzCore) {
 
     let psp_header = include_str!("../assets/pspsdk_types.h");
     let psp_niddb = include_str!("../assets/niddb_combined.xml");
+
+    let parsed_niddb: FunctionVec = quick_xml::de::from_str(psp_niddb).expect("failed to parse");
+
+    //let mut map = HashMap::new();
+    //for entry in parsed_niddb.0.into_iter() {
+        //map.insert(u32::from_str_radix(&entry.function.nid_hex_string[2..], 16).unwrap(), entry.function.name).unwrap();
+    //}
 
     let anal = unsafe { (*core).analysis };
     let io = unsafe { (*core).io };
@@ -184,6 +227,29 @@ fn do_nid_stuff(core: *mut RzCore) {
                 let mut buf = [0u8;PSP_LIB_MAX_NAME];
                 unsafe { rz_io_read_at(io, (imp.name + EHDR_SIZE).into(), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as i32); }
                 println!("{}", CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap());
+                println!("{:x?}", imp);
+
+                for i in 0..imp.func_count {
+                    let nid_addr = imp.nid_addr + EHDR_SIZE + 4*i as u32;
+                    let mut nid: u32 = 0;
+                    unsafe { rz_io_read_at(io, nid_addr.into(), ptr::addr_of_mut!(nid) as *mut _, 4i32) };
+                    let func = unsafe { rz_analysis_get_function_at(anal, (imp.funcs_addr + EHDR_SIZE + 4*i as u32).into()) };
+                    //println!("0x{:04x}", nid);
+                    //let name = map.get(&nid);
+                    //match name {
+                        //Some(n) => {
+                            //unsafe { 
+                                //println!("{:04x} {}", nid, n);
+                                //rz_analysis_function_rename(func, CString::new(n.clone()).unwrap().as_c_str().as_ptr() as *const _);
+                            //}
+                        //},
+                        //None => {
+
+                        //},
+                    //}
+
+                }
+                
             }
 
             for exp in exports {
