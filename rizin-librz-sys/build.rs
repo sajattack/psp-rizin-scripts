@@ -171,6 +171,7 @@ fn main() {
         .header("rizin/librz/include/rz_skiplist.h")
         //.header("rizin/librz/include/rz_socket.h")
         .header("rizin/librz/include/rz_syscall.h")
+        .header("rizin/librz/include/rz_vector.h")
         .derive_default(true)
         .derive_debug(true)
         .allowlist_function("rz_.*")
