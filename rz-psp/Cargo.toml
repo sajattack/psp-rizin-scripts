@@ -10,8 +10,8 @@ name = "rz_psp_core"
 crate-type = ["cdylib"]
 
 [dependencies]
+rizin-librz-sys = { path = "../rizin-librz-sys" }
 bytemuck = { version = "1.14.3", features = ["derive", "extern_crate_alloc"] }
 libc = "0.2.153"
-quick-xml = { version = "0.31.0", features = ["serde", "serialize"] }
-rizin-librz-sys = { path = "../rizin-librz-sys" }
-serde = { version = "1.0.197", features = ["serde_derive"] }
+serde = { version = "1.0.197", features = ["derive"] }
+quick-xml = { version = "0.31.0", features = ["serialize"] }

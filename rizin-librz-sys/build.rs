@@ -57,7 +57,7 @@ fn main() {
             ("cli", "disabled"),
             ("enable_tests", "false"),
             // The libzip shipped with rizin 0.6.3 doesn't compile
-            ("use_sys_libzip", "enabled")
+            //("use_sys_libzip", "enabled")
     ]));
 
     meson_next::build("rizin", build_path.to_str().unwrap(), config);
@@ -166,7 +166,6 @@ fn main() {
         .header("rizin/librz/include/rz_platform.h")
         .header("rizin/librz/include/rz_project.h")
         .header("rizin/librz/include/rz_reg.h")
-        .header("rizin/librz/include/rz_regex.h")
         .header("rizin/librz/include/rz_search.h")
         .header("rizin/librz/include/rz_sign.h")
         .header("rizin/librz/include/rz_skiplist.h")
