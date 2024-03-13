@@ -43,7 +43,7 @@ const rz_core_plugin_psp: RzCorePlugin = RzCorePlugin {
 #[no_mangle]
 pub unsafe extern "C" fn rz_cmd_psp_init(core: *mut RzCore) -> bool 
 {
-    println!("Hello World!");
+    //println!("Hello World!");
     if core.is_null() { return false; }
     let rcmd = unsafe {*core}.rcmd;
     let root_cd = unsafe { rz_cmd_get_root(rcmd) };
@@ -167,7 +167,7 @@ struct FunctionVec<'a> {
 rzpvector_to_vec!(section_list_to_vec, RzBinSection, core::mem::size_of::<RzBinSection>());
 
 fn do_nid_stuff(core: *mut RzCore) {
-    println!("Hello NID");
+    //println!("Hello NID");
 
     let psp_header = include_str!("../assets/pspsdk_types.h");
     let psp_niddb = include_str!("../assets/niddb_combined.xml");
@@ -214,7 +214,7 @@ fn do_nid_stuff(core: *mut RzCore) {
             unsafe { rz_io_read_at(io, exports_paddr, buf.as_mut_ptr(), exports_size as u64) };
             let export_bytes = buf;
             let exports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleExport>(&export_bytes);
-            dbg!(exports.clone());
+            //dbg!(exports.clone());
             let rz_exports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleExport\0".as_ptr() as *const _), exports_count as u64)};
             let rz_exports_var = unsafe { rz_analysis_var_global_create(anal, b"PspModuleExports\0".as_ptr() as *const _, rz_exports_type, exports_paddr) };
 
@@ -233,9 +233,8 @@ fn do_nid_stuff(core: *mut RzCore) {
                 let imp: PspModuleImport = imp;
                 let mut buf = [0u8;PSP_LIB_MAX_NAME];
                 unsafe { rz_io_read_at(io, (imp.name + EHDR_SIZE).into(), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as u64); }
-                println!("{}", CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap());
-                println!("{:x?}", imp);
-
+                //println!("{}", CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap());
+                //println!("{:x?}", imp);
                 for i in 0..imp.func_count {
                     let nid_addr = imp.nid_addr + EHDR_SIZE + 4*i as u32;
                     let mut nid: u32 = 0;
@@ -256,10 +255,10 @@ fn do_nid_stuff(core: *mut RzCore) {
                 
             }
 
-            for exp in exports {
+            //for exp in exports {
                 //dbg!(imp);
-                println!("{:x?}", exp);
-            }
+                //println!("{:x?}", exp);
+            //}
 
 
         } else if name == ".rodata.sceNid" {
