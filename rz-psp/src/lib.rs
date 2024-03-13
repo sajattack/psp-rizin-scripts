@@ -43,7 +43,7 @@ const rz_core_plugin_psp: RzCorePlugin = RzCorePlugin {
 #[no_mangle]
 pub unsafe extern "C" fn rz_cmd_psp_init(core: *mut RzCore) -> bool 
 {
-    println!("Hello World!");
+    //println!("Hello World!");
     if core.is_null() { return false; }
     let rcmd = unsafe {*core}.rcmd;
     let root_cd = unsafe { rz_cmd_get_root(rcmd) };
@@ -208,11 +208,11 @@ fn do_nid_stuff(core: *mut RzCore) {
             let exports_count = exports_size as usize / core::mem::size_of::<PspModuleExport>();
             buf.resize(exports_size as usize, 0);
             let exports_paddr = (modinfo.exports_addr + EHDR_SIZE) as u64;
-            unsafe { rz_io_read_at(io, exports_paddr, buf.as_mut_ptr(), exports_size as u16) };
+            unsafe { rz_io_read_at(io, exports_paddr, buf.as_mut_ptr(), exports_size as u64) };
             let export_bytes = buf;
             let exports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleExport>(&export_bytes);
             //dbg!(exports.clone());
-            let rz_exports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleExport\0".as_ptr() as *const _), exports_count as u16)};
+            let rz_exports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleExport\0".as_ptr() as *const _), exports_count as u64)};
             let rz_exports_var = unsafe { rz_analysis_var_global_create(anal, b"PspModuleExports\0".as_ptr() as *const _, rz_exports_type, exports_paddr) };
 
             let mut buf = Vec::new();
@@ -220,23 +220,22 @@ fn do_nid_stuff(core: *mut RzCore) {
             let imports_count = imports_size as usize / core::mem::size_of::<PspModuleImport>();
             buf.resize(imports_size as usize, 0);
             let imports_paddr = (modinfo.imports_addr + EHDR_SIZE) as u64;
-            unsafe { rz_io_read_at(io, imports_paddr, buf.as_mut_ptr(), imports_size as u16) };
+            unsafe { rz_io_read_at(io, imports_paddr, buf.as_mut_ptr(), imports_size as u64) };
             let import_bytes = buf;
             let imports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleImport>(&import_bytes);
-            let rz_imports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleImport\0".as_ptr() as *const _), imports_count as u16)};
+            let rz_imports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleImport\0".as_ptr() as *const _), imports_count as u64)};
             let rz_imports_var = unsafe { rz_analysis_var_global_create(anal, b"PspModuleImports\0".as_ptr() as *const _, rz_imports_type, imports_paddr) };
 
             for imp in imports {
                 let imp: PspModuleImport = imp;
                 let mut buf = [0u8;PSP_LIB_MAX_NAME];
-                unsafe { rz_io_read_at(io, (imp.name + EHDR_SIZE).into(), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as u16); }
+                unsafe { rz_io_read_at(io, (imp.name + EHDR_SIZE).into(), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as u64); }
                 //println!("{}", CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap());
                 //println!("{:x?}", imp);
-
                 for i in 0..imp.func_count {
                     let nid_addr = imp.nid_addr + EHDR_SIZE + 4*i as u32;
                     let mut nid: u32 = 0;
-                    unsafe { rz_io_read_at(io, nid_addr.into(), ptr::addr_of_mut!(nid) as *mut _, 4u16) };
+                    unsafe { rz_io_read_at(io, nid_addr.into(), ptr::addr_of_mut!(nid) as *mut _, 4u64) };
                     let name = map.get(&nid);
                     match name {
                         Some(n) => {
@@ -250,20 +249,17 @@ fn do_nid_stuff(core: *mut RzCore) {
                 }
                 
             }
-
-            for exp in exports {
+            //for exp in exports {
                 //dbg!(imp);
                 //println!("{:x?}", exp);
-            }
-
-
+            //}
         } else if name == ".rodata.sceNid" {
             let mut buf = Vec::new();
             buf.resize(s.size.try_into().unwrap(), 0);
             unsafe { rz_io_read_at(io, s.paddr, buf.as_mut_ptr(), s.size.try_into().unwrap()) };
         }
     }
-    unsafe { (*io).va = true as i32; } // use virtual addreses
+    //unsafe { (*io).va = true as i32; } // use virtual addreses
 }
 
 #[no_mangle]
