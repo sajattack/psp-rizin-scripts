@@ -47,7 +47,7 @@ pub struct PspModuleExport {
     pub name: u32,
     pub flags: u32,
     pub counts: u32,
-    pub exports: u32
+    pub exports: u32,
 }
 
 //#[derive(Debug, Clone, Copy, Default, Pod)]
@@ -60,10 +60,17 @@ pub struct PspModuleExport {
     //str
 //}
 
-//#[derive(Debug, Clone, Copy, Default, Pod)]
-//#[repr(C)]
-//struct PspLibExport {
-//}
+#[derive(Debug, Clone, Copy, Default, Zeroable, Pod)]
+#[repr(C)]
+struct SceLibraryEntryTable {
+    pub name: u32,
+    pub version: u16,
+    pub attribute: u16,
+    pub entLen: u8,
+    pub varCount: u8,
+    pub funcCount: u16,
+    pub entryTable: u32,
+}
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]

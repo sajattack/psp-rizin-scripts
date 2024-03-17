@@ -660,7 +660,7 @@ typedef struct {
 	unsigned int		segmentsize[4];
 }  SceModule;
 
-typedef struct {
+typedef struct SceLibraryEntryTable {
 	const char *		libname;
 	unsigned char		version[2];
 	unsigned short		attribute;
