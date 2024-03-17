@@ -2,7 +2,7 @@ mod types;
 use crate::types::*;
 
 use core::{
-    ffi::{c_char, c_void, c_int, CStr, c_ulonglong},
+    ffi::{c_char, c_void, c_int, CStr},
     ptr, mem,
     convert::TryInto,
 };
@@ -10,13 +10,13 @@ use core::{
 use std::{ffi::CString, collections::HashMap, cell::RefCell};
 
 use rizin_librz_sys::{
-    RzCorePlugin, RzCore, rz_core_plugin_t, RzLibStruct, RzLibType_RZ_LIB_TYPE_CORE,
-    RzCmd, RzCmdDesc, rz_cmd_get_root, rz_cmd_desc_argv_new, 
+    RzCorePlugin, RzCore, RzLibStruct, RzLibType_RZ_LIB_TYPE_CORE,
+    rz_cmd_get_root, rz_cmd_desc_argv_new, 
     rz_cmd_status_t_RZ_CMD_STATUS_WRONG_ARGS, rz_cmd_status_t_RZ_CMD_STATUS_OK,
     rz_cmd_status_t_RZ_CMD_STATUS_INVALID,
     RzCmdDescHelp, RzCmdDescArg, rz_cmd_arg_type_t_RZ_CMD_ARG_TYPE_STRING,
     RzCmdStatus, RzCmdDescDetail, RzCmdDescDetailEntry, rz_io_read_at, RzBinSection,
-    rz_bin_object_get_sections_all, rz_type_db_init, rz_type_parse_string,
+    rz_bin_object_get_sections_all, rz_type_parse_string,
     rz_analysis_var_global_create, rz_type_db_get_struct, 
     rz_type_identifier_of_base_type, rz_type_array_of_base_type,
     rz_analysis_get_function_at, rz_analysis_function_rename,
@@ -26,7 +26,8 @@ use rizin_librz_sys::{
 
 use serde::{Serialize, Deserialize};
 
-const rz_core_plugin_psp: RzCorePlugin = RzCorePlugin {
+#[no_mangle]
+static mut RZ_CORE_PLUGIN_PSP: RzCorePlugin = RzCorePlugin {
 	name: b"rz-psp\0".as_ptr() as *const c_char,
 	desc: b"Sony PSP Reverse Engineering Plugin for Rizin\0".as_ptr() as *const c_char,
 	license: b"MIT\0".as_ptr() as *const c_char,
@@ -60,7 +61,7 @@ pub unsafe extern "C" fn rz_cmd_psp_init(core: *mut RzCore) -> bool
 
     unsafe { NID_MAP = RefCell::new(Some(HashMap::new())); }
     let mut local_borrow = unsafe { NID_MAP.borrow_mut() };
-    let mut local_map = local_borrow.as_mut().unwrap();
+    let local_map = local_borrow.as_mut().unwrap();
     for entry in parsed_niddb.functions.into_iter() {
         local_map.insert(u32::from_str_radix(&entry.nid[2..], 16).unwrap(), entry.name);
     }
@@ -80,7 +81,7 @@ pub unsafe extern "C" fn rz_cmd_psp_init(core: *mut RzCore) -> bool
 
 #[no_mangle]
 pub extern "C" fn rz_cmd_psp_handler(core: *mut RzCore, argc: c_int, argv: *mut *const c_char) -> RzCmdStatus {
-    if argc != 3 {
+    if argc != 2 {
         return rz_cmd_status_t_RZ_CMD_STATUS_WRONG_ARGS
     } else {
         if unsafe{ !argv.add(1).is_null() } {
@@ -97,9 +98,10 @@ pub extern "C" fn rz_cmd_psp_handler(core: *mut RzCore, argc: c_int, argv: *mut 
     }
 }
 
+#[no_mangle]
 static mut CMD_PSP_HELP: RzCmdDescHelp = RzCmdDescHelp {
     summary: b"Sony PSP Reverse Engineering Plugin\0".as_ptr() as *const c_char,
-    args: unsafe { ptr::addr_of!(CMD_PSP_ARGS) },
+    args: unsafe { CMD_PSP_ARGS.as_ptr() },
     description: ptr::null(),
     args_str: ptr::null(),
     usage:  b"rz-psp subcommand\0".as_ptr() as *const c_char,
@@ -109,12 +111,14 @@ static mut CMD_PSP_HELP: RzCmdDescHelp = RzCmdDescHelp {
     details_cb: None,
 };
 
+#[no_mangle]
 static mut CMD_PSP_DETAIL_ENTRY: RzCmdDescDetailEntry = RzCmdDescDetailEntry {
     text: b"nid\0".as_ptr() as *const c_char,
     comment: b"Resolve NIDs to function names\0".as_ptr() as *const c_char,
     arg_str: ptr::null(),
 };
 
+#[no_mangle]
 static mut CMD_PSP_DETAILS: [RzCmdDescDetail;2] = [
     RzCmdDescDetail {
         name: b"subcommand\0".as_ptr() as *const c_char,
@@ -123,7 +127,8 @@ static mut CMD_PSP_DETAILS: [RzCmdDescDetail;2] = [
     unsafe { mem::zeroed() },
 ];
 
-static mut CMD_PSP_ARGS: RzCmdDescArg =  RzCmdDescArg {
+#[no_mangle]
+static mut CMD_PSP_ARGS: [RzCmdDescArg;2] = [RzCmdDescArg {
     name: b"subcommand\0".as_ptr() as *const c_char,
     type_: rz_cmd_arg_type_t_RZ_CMD_ARG_TYPE_STRING,
     optional: false, 
@@ -131,7 +136,9 @@ static mut CMD_PSP_ARGS: RzCmdDescArg =  RzCmdDescArg {
     flags: 0,
     default_value: ptr::null(),
     __bindgen_anon_1: unsafe { mem::zeroed() },
-};
+},
+    unsafe { mem::zeroed() }
+];
 
 /// A generic converter from RzVector to Vec (with a type conversion function)
 macro_rules! rzpvector_to_vec {
@@ -309,7 +316,7 @@ fn do_nid_stuff(core: *mut RzCore) {
 #[no_mangle]
 pub static mut rizin_plugin: RzLibStruct = RzLibStruct {
     type_: RzLibType_RZ_LIB_TYPE_CORE,
-    data: &rz_core_plugin_psp as *const _ as *mut c_void, // lolwut?
+    data: unsafe { &RZ_CORE_PLUGIN_PSP as *const _ as *mut c_void }, // lolwut?
     version: b"0.7.2\0".as_ptr() as *const _,
     free: None,
 };
