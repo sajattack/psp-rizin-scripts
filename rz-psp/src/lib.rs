@@ -203,9 +203,99 @@ struct FunctionVec<'a> {
 
 rzpvector_to_vec!(section_list_to_vec, RzBinSection, core::mem::size_of::<RzBinSection>());
 
-fn do_nid_stuff(core: *mut RzCore) {
-    //println!("Hello NID");
+fn resolve_imports(core: *mut RzCore, modinfo: &PspModuleInfo) {
+    let anal = unsafe { (*core).analysis };
+    let typedb = unsafe { (*anal).typedb };
+    let io = unsafe { (*core).io };
+    let bin = unsafe { (*core).bin };
+    let bobj = unsafe { rz_bin_cur_object(bin) };
 
+
+    let mut buf = Vec::new();
+    let imports_size = modinfo.imports_end_addr - modinfo.imports_addr;
+    let imports_count = imports_size as usize / core::mem::size_of::<PspModuleImport>();
+    buf.resize(imports_size as usize, 0);
+    let imports_paddr = modinfo.imports_addr as u64 + EHDR_SIZE as u64;
+    let imports_vaddr = unsafe { rz_bin_object_p2v(bobj, imports_paddr)};
+    unsafe { rz_io_read_at(io, imports_vaddr, buf.as_mut_ptr(), imports_size as u64) };
+    let import_bytes = buf;
+    let imports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleImport>(&import_bytes);
+    let rz_imports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleImport\0".as_ptr() as *const _), imports_count as u64)};
+    let rz_imports_var = unsafe { rz_analysis_var_global_create(anal, format!("PspModuleImport_{:08x}\0", imports_vaddr).as_ptr() as *const _, rz_imports_type, imports_vaddr) };
+
+
+    if let Some(local_map) = unsafe {NID_MAP.borrow().as_ref()} {
+        for imp in imports {
+            let imp: PspModuleImport = imp;
+            let mut buf = [0u8;PSP_LIB_MAX_NAME];
+            unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, imp.name.into()), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as u64); }
+            //let _import_name = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
+            for i in 0..imp.func_count {
+                let nid_addr: u64 = imp.nid_addr as u64 + 4*i as u64;
+                let mut nid: u32 = 0;
+                unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, (nid_addr + EHDR_SIZE as u64)), ptr::addr_of_mut!(nid) as *mut _, 4u64) };
+                //println!("nid: {:08x}", nid);
+                let name = local_map.get(&nid);
+                match name {
+                    Some(n) => {
+                        let paddr = (imp.funcs_addr+4*i as u32) as u64;
+                        let vaddr = unsafe { rz_bin_object_p2v(bobj, paddr) };
+                        let name_cstr = CString::new(*n).unwrap();
+                        //println!("{} @ {:08x}", n, vaddr);
+                        let existing_func = unsafe { rz_analysis_get_function_at(anal, paddr) };
+                        if existing_func.is_null()
+                        {
+                            let func = unsafe { rz_analysis_create_function(anal, name_cstr.as_ptr(), paddr, RzAnalysisFcnType_RZ_ANALYSIS_FCN_TYPE_FCN) };
+                        } else {
+                            unsafe { rz_analysis_function_rename(existing_func, name_cstr.as_ptr()) };
+                        }
+                    },
+                    None => {
+
+                    },
+                }
+
+            }
+        }
+    }
+}
+
+fn resolve_exports(core: *mut RzCore, modinfo: &PspModuleInfo) {
+    let anal = unsafe { (*core).analysis };
+    let typedb = unsafe { (*anal).typedb };
+    let io = unsafe { (*core).io };
+    let bin = unsafe { (*core).bin };
+    let bobj = unsafe { rz_bin_cur_object(bin) };
+
+    let mut buf = Vec::new();
+    let exports_size = modinfo.exports_end_addr - modinfo.exports_addr;
+    let exports_count = exports_size as usize / core::mem::size_of::<PspModuleExport>();
+    buf.resize(exports_size as usize, 0);
+    let exports_paddr = modinfo.exports_addr as u64 + EHDR_SIZE as u64;
+    let exports_vaddr = unsafe { rz_bin_object_p2v(bobj, exports_paddr)};
+    unsafe { rz_io_read_at(io, exports_paddr, buf.as_mut_ptr(), exports_size as u64) };
+    let export_bytes = buf;
+    let exports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleExport>(&export_bytes);
+    //dbg!(exports.clone());
+    let rz_exports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleExport\0".as_ptr() as *const _), exports_count as u64)};
+    let rz_exports_var = unsafe { rz_analysis_var_global_create(anal, format!("PspModuleExport_{:08x}\0", exports_vaddr).as_bytes().as_ptr() as *const _, rz_exports_type, exports_vaddr) };
+
+    for exp in exports {
+        let exp: PspModuleExport = exp;
+        let mut buf = [0u8;PSP_ENTRY_MAX_NAME];
+        unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, exp.name.into()), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as u64); }
+        //let export_name = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
+        //let rz_exports_entry_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "SceLibraryEntryTable\0".as_ptr() as *const _), exports_count as u64)};
+        //let rz_exports_entry_var = unsafe { rz_analysis_var_global_create(anal, b"entry\0".as_ptr() as *const _, rz_exports_entry_type, rz_bin_object_p2v(bobj, exp.exports as u64)) };
+    }
+}
+
+fn resolve_nids(core: *mut RzCore, modinfo: &PspModuleInfo) {
+    resolve_exports(core, modinfo);
+    resolve_imports(core, modinfo);
+}
+
+fn find_modinfo(core: *mut RzCore) -> Option<PspModuleInfo> {
     let anal = unsafe { (*core).analysis };
     let typedb = unsafe { (*anal).typedb };
     let io = unsafe { (*core).io };
@@ -215,7 +305,7 @@ fn do_nid_stuff(core: *mut RzCore) {
 
     if bobj.is_null() {
         println!("A file must be loaded first");
-        return;
+        return None;
     }
 
 
@@ -224,93 +314,33 @@ fn do_nid_stuff(core: *mut RzCore) {
     for s in sections {
         let name = unsafe { CStr::from_ptr(s.name).to_str().unwrap()};
         if name == ".rodata.sceModuleInfo" {
-            let mut buf = Vec::new();
+             let mut buf = Vec::new();
             buf.resize(s.size.try_into().unwrap(), 0);
             unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, s.paddr), buf.as_mut_ptr(), s.size.try_into().unwrap()) };
             let modinfo = bytemuck::from_bytes::<PspModuleInfo>(&buf[..core::mem::size_of::<PspModuleInfo>()]);
             let rz_modinfo_type = unsafe { rz_type_identifier_of_base_type(typedb, rz_type_db_get_struct(typedb, b"PspModuleInfo\0".as_ptr() as *const _), false)};
             let rz_modinfo_var = unsafe { rz_analysis_var_global_create(anal, b"var_module_info\0".as_ptr() as *const _, rz_modinfo_type, s.vaddr) };
-            
-            let mut buf = Vec::new();
-            let exports_size = modinfo.exports_end_addr - modinfo.exports_addr;
-            let exports_count = exports_size as usize / core::mem::size_of::<PspModuleExport>();
-            buf.resize(exports_size as usize, 0);
-            let exports_paddr = modinfo.exports_addr as u64 + EHDR_SIZE as u64;
-            let exports_vaddr = unsafe { rz_bin_object_p2v(bobj, exports_paddr)};
-            unsafe { rz_io_read_at(io, exports_paddr, buf.as_mut_ptr(), exports_size as u64) };
-            let export_bytes = buf;
-            let exports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleExport>(&export_bytes);
-            //dbg!(exports.clone());
-            let rz_exports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleExport\0".as_ptr() as *const _), exports_count as u64)};
-            let rz_exports_var = unsafe { rz_analysis_var_global_create(anal, format!("PspModuleExport_{:08x}\0", exports_vaddr).as_bytes().as_ptr() as *const _, rz_exports_type, exports_vaddr) };
-
-            for exp in exports {
-                let exp: PspModuleExport = exp;
-                let mut buf = [0u8;PSP_ENTRY_MAX_NAME];
-                unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, exp.name.into()), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as u64); }
-                //let export_name = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
-                //let rz_exports_entry_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "SceLibraryEntryTable\0".as_ptr() as *const _), exports_count as u64)};
-                //let rz_exports_entry_var = unsafe { rz_analysis_var_global_create(anal, b"entry\0".as_ptr() as *const _, rz_exports_entry_type, rz_bin_object_p2v(bobj, exp.exports as u64)) };
-            }
-
-            let mut buf = Vec::new();
-            let imports_size = modinfo.imports_end_addr - modinfo.imports_addr;
-            let imports_count = imports_size as usize / core::mem::size_of::<PspModuleImport>();
-            buf.resize(imports_size as usize, 0);
-            let imports_paddr = modinfo.imports_addr as u64 + EHDR_SIZE as u64;
-            let imports_vaddr = unsafe { rz_bin_object_p2v(bobj, imports_paddr)};
-            unsafe { rz_io_read_at(io, imports_vaddr, buf.as_mut_ptr(), imports_size as u64) };
-            let import_bytes = buf;
-            let imports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleImport>(&import_bytes);
-            let rz_imports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleImport\0".as_ptr() as *const _), imports_count as u64)};
-            let rz_imports_var = unsafe { rz_analysis_var_global_create(anal, format!("PspModuleImport_{:08x}\0", imports_vaddr).as_ptr() as *const _, rz_imports_type, imports_vaddr) };
-
-
-            if let Some(local_map) = unsafe {NID_MAP.borrow().as_ref()} {
-                for imp in imports {
-                    let imp: PspModuleImport = imp;
-                    let mut buf = [0u8;PSP_LIB_MAX_NAME];
-                    unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, imp.name.into()), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as u64); }
-                    //let _import_name = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
-                    for i in 0..imp.func_count {
-                        let nid_addr: u64 = imp.nid_addr as u64 + 4*i as u64;
-                        let mut nid: u32 = 0;
-                        unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, (nid_addr + EHDR_SIZE as u64)), ptr::addr_of_mut!(nid) as *mut _, 4u64) };
-                        //println!("nid: {:08x}", nid);
-                        let name = local_map.get(&nid);
-                        match name {
-                            Some(n) => {
-                                let paddr = (imp.funcs_addr+4*i as u32) as u64;
-                                let vaddr = unsafe { rz_bin_object_p2v(bobj, paddr) };
-                                let name_cstr = CString::new(*n).unwrap();
-                                //println!("{} @ {:08x}", n, vaddr);
-                                let existing_func = unsafe { rz_analysis_get_function_at(anal, paddr) };
-                                if existing_func.is_null()
-                                {
-                                    let func = unsafe { rz_analysis_create_function(anal, name_cstr.as_ptr(), paddr, RzAnalysisFcnType_RZ_ANALYSIS_FCN_TYPE_FCN) };
-                                } else {
-                                    unsafe { rz_analysis_function_rename(existing_func, name_cstr.as_ptr()) };
-                                }
-                            },
-                            None => {
-
-                            },
-                        }
-
-                    }
-                }
-            }
-            //for exp in exports {
-                //dbg!(imp);
-                //println!("{:x?}", exp);
-            //}
-        } else if name == ".rodata.sceNid" {
-            let mut buf = Vec::new();
-            buf.resize(s.size.try_into().unwrap(), 0);
-            unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, s.paddr), buf.as_mut_ptr(), s.size.try_into().unwrap()) };
+            return Some(*modinfo)
         }
     }
-    //unsafe { (*io).va = true as i32; } // use virtual addreses
+    None
+}
+
+fn do_nid_stuff(core: *mut RzCore) {
+    let anal = unsafe { (*core).analysis };
+    let typedb = unsafe { (*anal).typedb };
+    let io = unsafe { (*core).io };
+    let bin = unsafe { (*core).bin };
+    let bobj = unsafe { rz_bin_cur_object(bin) };
+
+    if bobj.is_null() {
+        println!("A file must be loaded first");
+        return;
+    }
+
+    if let Some(modinfo) = find_modinfo(core) {
+        resolve_nids(core, &modinfo);
+    }
 }
 
 #[no_mangle]
