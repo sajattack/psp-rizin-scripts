@@ -46,8 +46,10 @@ pub struct PspModuleImport {
 pub struct PspModuleExport {
     pub name: u32,
     pub flags: u32,
-    pub counts: u32,
-    pub exports: u32,
+    pub entry_len: u8,
+    pub var_count: u8,
+    pub func_count: u16,
+    pub exports: u32
 }
 
 //#[derive(Debug, Clone, Copy, Default, Pod)]

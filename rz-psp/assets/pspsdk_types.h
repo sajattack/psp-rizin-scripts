@@ -1938,11 +1938,13 @@ struct option {
 
 
 struct PspModuleExport {
-	u32 name;
-	u32 flags;
-	u32 counts;
-	u32 exports;
-} ;
+    char *name;
+    unsigned int flags;
+    u8 entry_len;
+    u8 var_count;
+    u16 func_count;
+    u32 exports; 
+};
 
 struct PspModuleImport {
 	u32 name;

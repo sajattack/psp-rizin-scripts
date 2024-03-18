@@ -21,7 +21,7 @@ use rizin_librz_sys::{
     rz_type_identifier_of_base_type, rz_type_array_of_base_type,
     rz_analysis_get_function_at, rz_analysis_function_rename,
     rz_bin_cur_object, RzPVector, rz_pvector_pop_front, rz_analysis_create_function,
-    RzAnalysisFcnType_RZ_ANALYSIS_FCN_TYPE_FCN, rz_bin_object_p2v
+    RzAnalysisFcnType_RZ_ANALYSIS_FCN_TYPE_FCN, rz_bin_object_p2v, Elf32_rz_bin_elf_obj_t, RzBinElfSegment, RzVector, rz_bin_object_v2p, 
 };
 
 use serde::{Serialize, Deserialize};
@@ -140,49 +140,39 @@ static mut CMD_PSP_ARGS: [RzCmdDescArg;2] = [RzCmdDescArg {
     unsafe { mem::zeroed() }
 ];
 
-/// A generic converter from RzVector to Vec (with a type conversion function)
-macro_rules! rzpvector_to_vec {
-    ($fn_name:ident, $return_type:ident, $size:expr) => {
-        fn $fn_name(pvec: *mut RzPVector) -> Vec<$return_type> {
-            let mut vec: Vec<$return_type> = Vec::new();
-            unsafe {
-                while (*pvec).v.len != 0 {
-                    let element = rz_pvector_pop_front(pvec) as *mut u8;
-                    let mut buf = [0u8; $size];
-                    element.copy_to(buf.as_mut_ptr(), $size);
-                    // FIXME maybe bytemuck this if you can find a decent
-                    // way to derive the trait required???
-                    let el = core::mem::transmute::<[u8; $size], $return_type>(buf);
-                    vec.push(el);
-                }
-            }
-            vec
-        }
-    };
+pub fn pvec_to_vec<T>(pvec: *mut RzPVector) -> Vec<*mut T> {
+    let mut vec: Vec<*mut T> = Vec::new();
+    if pvec.is_null() {
+        println!("PVector pointer is null.");
+        return vec;
+    }
+
+    let len = unsafe { (*pvec).v.len };
+    if len <= 0 {
+        return vec;
+    }
+    vec.reserve(len as usize);
+    let data_arr: &mut [*mut T] =
+        unsafe { std::slice::from_raw_parts_mut((*pvec).v.a as *mut *mut T, len as usize) };
+    for i in 0..len {
+        vec.push(data_arr[i as usize]);
+    }
+    assert_eq!(len, vec.len().try_into().unwrap());
+    vec
 }
 
-/// A generic converter from RzList to Vec
-macro_rules! rzlist_to_vec {
-    ($fn_name:ident,  $return_type:ident, $size:expr) => {
-        fn $fn_name(rzl: *mut rizin_librz_sys::RzList) -> Vec<$return_type> {
-            let mut vec: Vec<$return_type> = Vec::new();
-            unsafe {
-                let mut ptr = (*rzl).head;
-                while !ptr.is_null() {
-                    let data = (*ptr).elem;
-                    let element = data as *mut u8;
-                    let mut buf = [0u8; $size];
-                    element.copy_to(buf.as_mut_ptr(), $size);
-                    // FIXME maybe bytemuck this if you can find a decent
-                    // way to derive the trait required???
-                    let el = core::mem::transmute::<[u8; $size], $return_type>(buf);
-                    vec.push(el);
-                    ptr = (*ptr).next;
-                }
-            }
-            vec
-        }
-    };
+pub fn rzvec_to_vec<T: Clone>(rzvec: RzVector) -> Vec<T> {
+    let mut vec: Vec<T> = Vec::new();
+    let len = unsafe { rzvec.len };
+    if len <= 0 {
+        return vec;
+    }
+    vec.reserve(len as usize);
+    let data_arr: &[T] =
+        unsafe { std::slice::from_raw_parts_mut((rzvec).a as *mut T, len as usize) };
+    vec = data_arr.to_vec();
+    assert_eq!(len, vec.len().try_into().unwrap());
+    vec
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -200,8 +190,6 @@ struct FunctionVec<'a> {
     #[serde(borrow)]
     functions: Vec<Function<'a>>,
 }
-
-rzpvector_to_vec!(section_list_to_vec, RzBinSection, core::mem::size_of::<RzBinSection>());
 
 fn resolve_imports(core: *mut RzCore, modinfo: &PspModuleInfo) {
     let anal = unsafe { (*core).analysis };
@@ -231,28 +219,22 @@ fn resolve_imports(core: *mut RzCore, modinfo: &PspModuleInfo) {
             unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, imp.name.into()), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as u64); }
             //let _import_name = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
             for i in 0..imp.func_count {
-                let nid_addr: u64 = imp.nid_addr as u64 + 4*i as u64;
+                let nid_addr: u64 = imp.nid_addr as u64 + 4*i as u64 + EHDR_SIZE as u64;
                 let mut nid: u32 = 0;
-                unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, (nid_addr + EHDR_SIZE as u64)), ptr::addr_of_mut!(nid) as *mut _, 4u64) };
+                unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, nid_addr), ptr::addr_of_mut!(nid) as *mut _, 4u64) };
                 //println!("nid: {:08x}", nid);
-                let name = local_map.get(&nid);
-                match name {
-                    Some(n) => {
-                        let paddr = (imp.funcs_addr+4*i as u32) as u64;
-                        let vaddr = unsafe { rz_bin_object_p2v(bobj, paddr) };
-                        let name_cstr = CString::new(*n).unwrap();
-                        //println!("{} @ {:08x}", n, vaddr);
-                        let existing_func = unsafe { rz_analysis_get_function_at(anal, paddr) };
-                        if existing_func.is_null()
-                        {
-                            let func = unsafe { rz_analysis_create_function(anal, name_cstr.as_ptr(), paddr, RzAnalysisFcnType_RZ_ANALYSIS_FCN_TYPE_FCN) };
-                        } else {
-                            unsafe { rz_analysis_function_rename(existing_func, name_cstr.as_ptr()) };
-                        }
-                    },
-                    None => {
-
-                    },
+                if let Some(name) = local_map.get(&nid) {
+                    let paddr = (imp.funcs_addr+4*i as u32) as u64;
+                    let vaddr = unsafe { rz_bin_object_p2v(bobj, paddr) };
+                    let name_cstr = CString::new(*name).unwrap();
+                    //println!("{} @ {:08x}", n, vaddr);
+                    let existing_func = unsafe { rz_analysis_get_function_at(anal, paddr) };
+                    if existing_func.is_null()
+                    {
+                        let func = unsafe { rz_analysis_create_function(anal, name_cstr.as_ptr(), paddr, RzAnalysisFcnType_RZ_ANALYSIS_FCN_TYPE_FCN) };
+                    } else {
+                        unsafe { rz_analysis_function_rename(existing_func, name_cstr.as_ptr()) };
+                    }
                 }
 
             }
@@ -276,17 +258,32 @@ fn resolve_exports(core: *mut RzCore, modinfo: &PspModuleInfo) {
     unsafe { rz_io_read_at(io, exports_paddr, buf.as_mut_ptr(), exports_size as u64) };
     let export_bytes = buf;
     let exports = bytemuck::allocation::pod_collect_to_vec::<u8, PspModuleExport>(&export_bytes);
-    //dbg!(exports.clone());
     let rz_exports_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "PspModuleExport\0".as_ptr() as *const _), exports_count as u64)};
     let rz_exports_var = unsafe { rz_analysis_var_global_create(anal, format!("PspModuleExport_{:08x}\0", exports_vaddr).as_bytes().as_ptr() as *const _, rz_exports_type, exports_vaddr) };
 
-    for exp in exports {
-        let exp: PspModuleExport = exp;
-        let mut buf = [0u8;PSP_ENTRY_MAX_NAME];
-        unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, exp.name.into()), buf.as_mut_ptr(), PSP_LIB_MAX_NAME as u64); }
-        //let export_name = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
-        //let rz_exports_entry_type = unsafe { rz_type_array_of_base_type(typedb, rz_type_db_get_struct(typedb, "SceLibraryEntryTable\0".as_ptr() as *const _), exports_count as u64)};
-        //let rz_exports_entry_var = unsafe { rz_analysis_var_global_create(anal, b"entry\0".as_ptr() as *const _, rz_exports_entry_type, rz_bin_object_p2v(bobj, exp.exports as u64)) };
+    if let Some(local_map) = unsafe {NID_MAP.borrow().as_ref()} {
+        for exp in exports {
+            let num_nids = exp.func_count + exp.var_count as u16;
+            let nids_base = (exp.exports + EHDR_SIZE) as u64;
+            let stub_base = nids_base + (4 * num_nids) as u64;
+            for i in 0..exp.func_count as u64 {
+                let nid_addr = nids_base + 4*i as u64;
+                let mut nid: u32 = 0;
+                unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, nid_addr as u64), ptr::addr_of_mut!(nid) as *mut _, 4u64) };
+                if let Some(name) = local_map.get(&nid) {
+                    let mut stub_paddr: u32 = 0;
+                    unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, (stub_base+4*i)  as u64), ptr::addr_of_mut!(stub_paddr) as *mut _, 4u64) };
+                    let name_cstr = CString::new(*name).unwrap();
+                    let existing_func = unsafe { rz_analysis_get_function_at(anal, stub_paddr as u64) };
+                    if existing_func.is_null()
+                    {
+                        let func = unsafe { rz_analysis_create_function(anal, name_cstr.as_ptr(), stub_paddr as u64, RzAnalysisFcnType_RZ_ANALYSIS_FCN_TYPE_FCN) };
+                    } else {
+                        unsafe { rz_analysis_function_rename(existing_func, name_cstr.as_ptr()) };
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -303,18 +300,13 @@ fn find_modinfo(core: *mut RzCore) -> Option<PspModuleInfo> {
     let bin = unsafe { (*core).bin };
     let bobj = unsafe { rz_bin_cur_object(bin) };
 
-    if bobj.is_null() {
-        println!("A file must be loaded first");
-        return None;
-    }
-
-
     let sections = unsafe { rz_bin_object_get_sections_all(bobj) as *mut _ };
-    let sections = section_list_to_vec(sections);
+    let sections: Vec<*mut RzBinSection> = pvec_to_vec(sections);
     for s in sections {
+        let s = unsafe { *s };
         let name = unsafe { CStr::from_ptr(s.name).to_str().unwrap()};
         if name == ".rodata.sceModuleInfo" {
-             let mut buf = Vec::new();
+            let mut buf = Vec::new();
             buf.resize(s.size.try_into().unwrap(), 0);
             unsafe { rz_io_read_at(io, rz_bin_object_p2v(bobj, s.paddr), buf.as_mut_ptr(), s.size.try_into().unwrap()) };
             let modinfo = bytemuck::from_bytes::<PspModuleInfo>(&buf[..core::mem::size_of::<PspModuleInfo>()]);
@@ -322,6 +314,20 @@ fn find_modinfo(core: *mut RzCore) -> Option<PspModuleInfo> {
             let rz_modinfo_var = unsafe { rz_analysis_var_global_create(anal, b"var_module_info\0".as_ptr() as *const _, rz_modinfo_type, s.vaddr) };
             return Some(*modinfo)
         }
+    }
+    let elf: Elf32_rz_bin_elf_obj_t = unsafe { *(*bobj).bin_obj.cast::<Elf32_rz_bin_elf_obj_t>()};
+    let segments: Vec<RzBinElfSegment> = unsafe { rzvec_to_vec(*elf.segments)};
+    if segments.len() > 0 {
+        let modinfo_addr = segments[0].data.p_paddr - segments[0].data.p_offset + EHDR_SIZE;
+        let modinfo_addr = modinfo_addr & 0x7fff_ffff; 
+        let mut buf = Vec::new();
+        let size = core::mem::size_of::<PspModuleInfo>();
+        buf.resize(size.try_into().unwrap(), 0);
+        unsafe { rz_io_read_at(io, modinfo_addr as u64, buf.as_mut_ptr(), size.try_into().unwrap()) };
+        let modinfo = bytemuck::from_bytes::<PspModuleInfo>(&buf[..core::mem::size_of::<PspModuleInfo>()]);
+        let rz_modinfo_type = unsafe { rz_type_identifier_of_base_type(typedb, rz_type_db_get_struct(typedb, b"PspModuleInfo\0".as_ptr() as *const _), false)};
+        let rz_modinfo_var = unsafe { rz_analysis_var_global_create(anal, b"var_module_info\0".as_ptr() as *const _, rz_modinfo_type, modinfo_addr as u64) };
+        return Some(*modinfo)
     }
     None
 }
@@ -350,5 +356,3 @@ pub static mut rizin_plugin: RzLibStruct = RzLibStruct {
     version: b"0.7.2\0".as_ptr() as *const _,
     free: None,
 };
-
-
